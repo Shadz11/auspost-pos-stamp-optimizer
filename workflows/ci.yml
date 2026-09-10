@@ -1,0 +1,29 @@
+name: POS Engine CI & Rate Tier Verification
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify-pos-engine:
+    name: TypeScript Typecheck & AusPost Rate Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run strict TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Execute POS Stamp & Coin Scale Unit Tests
+        run: npm test

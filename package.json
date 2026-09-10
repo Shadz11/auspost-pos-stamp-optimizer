@@ -1,0 +1,24 @@
+{
+  "name": "auspost-pos-stamp-optimizer",
+  "version": "1.0.0",
+  "description": "Store-Inventory-Aware POS Stamp Optimization Engine & End-of-Day Coin Bag Scale Validator for Australia Post Retail Outlets",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "keywords": [
+    "australia-post",
+    "pos-engine",
+    "retail-operations",
+    "typescript",
+    "inventory-optimization",
+    "hardware-scale-validation"
+  ],
+  "author": "Shadabul Hoque",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
