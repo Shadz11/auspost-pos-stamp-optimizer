@@ -1,18 +1,21 @@
 /**
- * Australia Post Retail POS — Store-Inventory-Aware Stamp Optimization Engine
+ * Australia Post Retail (Post+ POS) — $1.85 Thematic Stamp Calculator & Counter Reference
  *
  * Domain Context (Hurlstone Park LPO — 150–200 daily customer transactions):
- * When franking a parcel with physical stamps ('S' key) instead of a thermal
- * postage label ('L' key), the legacy POS system executes a naive greedy algorithm
- * over all theoretical Australia Post denominations ($10.00, $5.00, $2.00, etc.).
+ * When putting physical stamps on a parcel in the Australia Post Post+ system ('S' key)
+ * instead of printing a thermal label ('L' key), Post+ does not track local stock at hand.
+ * Because it has no visibility into counter stock, Post+ defaults to the highest-value
+ * stamps ($10.00, $5.00, $2.00) and disregards the $1.85 thematic stamps (Disney, Marvel,
+ * NFL, Aussie Icons).
  *
- * Frontline Operational Bottlenecks:
- * 1. LPO counter drawers do NOT stock high-denomination $10.00 or $5.00 stamps.
- * 2. LPOs earn a significantly higher retail profit margin selling through
- *    $1.85 (185c) base/thematic stamp booklets (Disney, Marvel, NFL, Aussie Icons).
- * 3. Staff must manually calculate how many $1.85 stamps fit into the parcel rate
- *    and make up the exact remainder using in-stock low-denomination make-up stamps
- *    ($1.00, 50c, 25c, 20c, 10c, 5c).
+ * Everyday Counter Workflow (matching `Postage_Quick_sheet.html`):
+ * 1. Calculate how many $1.85 thematic stamps fit into the total parcel postage rate:
+ *    `primary185Count = Math.floor(targetInCents / 185)`
+ * 2. Compute the remaining cost:
+ *    `remainderCents = targetInCents - (primary185Count * 185)`
+ * 3. Staff can immediately grab the required number of $1.85 stamps and quickly pick up
+ *    whatever small make-up stamps are available at the counter (50c, 30c, 20c, 10c, 5c)
+ *    to cover the remaining cost.
  */
 
 export interface StampAllocation {
@@ -27,44 +30,37 @@ export interface PosStampPlan {
   targetFormatted: string;
   primary185Count: number;
   primary185SubtotalCents: number;
+  primary185SubtotalFormatted: string;
   remainderCents: number;
   remainderFormatted: string;
-  remainderAllocations: StampAllocation[];
-  allAllocations: StampAllocation[];
-  totalStampsPhysicalCount: number;
   verifiedExactMatch: boolean;
 }
 
-/**
- * Standard LPO counter drawer make-up stamp denominations (in cents),
- * sorted descending for exact remainder resolution after $1.85 allocation.
- */
-export const DEFAULT_LPO_MAKEUP_DENOMINATIONS_CENTS = [
-  100, // $1.00
-  50,  // $0.50
-  25,  // $0.25
-  20,  // $0.20
-  10,  // $0.10
-  5,   // $0.05
-] as const;
+export const BASE_THEMATIC_STAMP_CENTS = 185; // $1.85 Domestic Base / Thematic Stamp
 
 /**
- * Legacy POS theoretical denominations (in cents) that trigger counter drawer
- * mismatches when staff press 'S' (Stamp) instead of 'L' (Label).
+ * Standard low-denomination make-up stamps carried at most post offices (50c, 30c, 20c, 10c, 5c)
+ * that staff pick up to cover the remaining cost after placing the $1.85 thematic stamps.
+ */
+export const CARRIED_MAKEUP_DENOMINATIONS_CENTS = [50, 30, 20, 10, 5] as const;
+
+/**
+ * Post+ POS theoretical denominations (in cents) used when staff press 'S' (Stamp).
+ * Because Post+ does not track local stock at hand, it defaults to highest-value
+ * stamps first and disregards thematic $1.85 stamps.
  */
 export const LEGACY_POS_DENOMINATIONS_CENTS = [
-  1000, // $10.00 (Rarely stocked in LPO counter drawers)
-  500,  // $5.00  (Rarely stocked in LPO counter drawers)
+  1000, // $10.00
+  500,  // $5.00
   200,  // $2.00
   185,  // $1.85
   100,  // $1.00
-  50,   // $0.50
-  20,   // $0.20
-  10,   // $0.10
-  5,    // $0.05
+  50,   // 50c
+  30,   // 30c
+  20,   // 20c
+  10,   // 10c
+  5,    // 5c
 ] as const;
-
-export const BASE_THEMATIC_STAMP_CENTS = 185; // $1.85 Domestic Base / Thematic Stamp
 
 export function formatCentsToAud(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -78,16 +74,12 @@ export function formatDenominationLabel(cents: number): string {
 }
 
 /**
- * Computes the Store-Inventory-Aware POS Stamp Plan.
- *
- * Step 1: Maximizes $1.85 (185c) thematic/base stamps to maximize LPO retail margin
- *         and align with physical counter booklet inventory.
- * Step 2: Resolves the exact remaining cents using in-stock small make-up denominations
- *          via minimum-stamp dynamic programming (with greedy fallback).
+ * Quickly calculates how many $1.85 thematic stamps are needed for a parcel
+ * and the exact remaining cost, directly matching `Postage_Quick_sheet.html`.
  */
 export function optimizePosStamps(
   targetInCents: number,
-  makeupDenominationsCents: readonly number[] = DEFAULT_LPO_MAKEUP_DENOMINATIONS_CENTS
+  thematicStampCents: number = BASE_THEMATIC_STAMP_CENTS
 ): PosStampPlan {
   if (!Number.isInteger(targetInCents) || targetInCents <= 0) {
     throw new Error(`Invalid targetInCents: ${targetInCents}. Must be a positive integer.`);
@@ -96,104 +88,25 @@ export function optimizePosStamps(
     throw new Error(`Target postage ${targetInCents}c must be a multiple of 5c.`);
   }
 
-  const primary185Count = Math.floor(targetInCents / BASE_THEMATIC_STAMP_CENTS);
-  const primary185SubtotalCents = primary185Count * BASE_THEMATIC_STAMP_CENTS;
+  const primary185Count = Math.floor(targetInCents / thematicStampCents);
+  const primary185SubtotalCents = primary185Count * thematicStampCents;
   const remainderCents = targetInCents - primary185SubtotalCents;
-
-  const remainderAllocations = solveExactRemainder(
-    remainderCents,
-    makeupDenominationsCents
-  );
-
-  const allAllocations: StampAllocation[] = [];
-  if (primary185Count > 0) {
-    allAllocations.push({
-      denominationCents: BASE_THEMATIC_STAMP_CENTS,
-      label: formatDenominationLabel(BASE_THEMATIC_STAMP_CENTS),
-      count: primary185Count,
-      subtotalCents: primary185SubtotalCents,
-    });
-  }
-  allAllocations.push(...remainderAllocations);
-
-  const totalComputedCents = allAllocations.reduce(
-    (sum, item) => sum + item.subtotalCents,
-    0
-  );
-  const totalStampsPhysicalCount = allAllocations.reduce(
-    (sum, item) => sum + item.count,
-    0
-  );
 
   return {
     targetCents: targetInCents,
     targetFormatted: formatCentsToAud(targetInCents),
     primary185Count,
     primary185SubtotalCents,
+    primary185SubtotalFormatted: formatCentsToAud(primary185SubtotalCents),
     remainderCents,
     remainderFormatted: formatCentsToAud(remainderCents),
-    remainderAllocations,
-    allAllocations,
-    totalStampsPhysicalCount,
-    verifiedExactMatch: totalComputedCents === targetInCents,
+    verifiedExactMatch: primary185SubtotalCents + remainderCents === targetInCents,
   };
 }
 
 /**
- * Uses bounded dynamic programming to find the minimum physical stamp count
- * for the remainder using only available counter make-up denominations.
- */
-function solveExactRemainder(
-  remainderCents: number,
-  denominations: readonly number[]
-): StampAllocation[] {
-  if (remainderCents === 0) {
-    return [];
-  }
-
-  const sortedDenoms = [...denominations].sort((a, b) => b - a);
-  const dp = new Array<number>(remainderCents + 1).fill( Number.POSITIVE_INFINITY );
-  const chosenDenom = new Array<number>(remainderCents + 1).fill(-1);
-  dp[0] = 0;
-
-  for (let amount = 5; amount <= remainderCents; amount += 5) {
-    for (const denom of sortedDenoms) {
-      if (amount >= denom && dp[amount - denom] + 1 < dp[amount]) {
-        dp[amount] = dp[amount - denom] + 1;
-        chosenDenom[amount] = denom;
-      }
-    }
-  }
-
-  if (!Number.isFinite(dp[remainderCents])) {
-    throw new Error(
-      `Cannot resolve remainder ${remainderCents}c with provided denominations: [${sortedDenoms.join(", ")}]`
-    );
-  }
-
-  const counts = new Map<number, number>();
-  let cursor = remainderCents;
-  while (cursor > 0) {
-    const denom = chosenDenom[cursor];
-    counts.set(denom, (counts.get(denom) ?? 0) + 1);
-    cursor -= denom;
-  }
-
-  return sortedDenoms
-    .filter((d) => (counts.get(d) ?? 0) > 0)
-    .map((d) => {
-      const count = counts.get(d)!;
-      return {
-        denominationCents: d,
-        label: formatDenominationLabel(d),
-        count,
-        subtotalCents: d * count,
-      };
-    });
-}
-
-/**
- * Simulates the legacy POS 'S' key naive greedy behavior for side-by-side comparison.
+ * Simulates the Post+ POS 'S' key behavior (which lacks stock-at-hand tracking
+ * and defaults to highest denominations first).
  */
 export function simulateLegacyPosGreedy(targetInCents: number): StampAllocation[] {
   let remaining = targetInCents;

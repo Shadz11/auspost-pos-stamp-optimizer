@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   AUSPOST_COUNTER_RATE_TIERS,
-  BASE_THEMATIC_STAMP_CENTS,
+  CARRIED_MAKEUP_DENOMINATIONS_CENTS,
   optimizePosStamps,
   simulateLegacyPosGreedy,
 } from "../src/posEngine.ts";
@@ -12,8 +12,12 @@ import {
   type AustralianCoinDenomination,
 } from "../src/coinWeigher.ts";
 
-describe("Australia Post Store-Inventory-Aware POS Stamp Engine", () => {
-  it("resolves all Parcel Post tiers with 100% accuracy matching Postage_Quick_sheet.html", () => {
+describe("Australia Post $1.85 Thematic Stamp Calculator (Postage_Quick_sheet.html)", () => {
+  it("lists carried counter make-up denominations [50, 30, 20, 10, 5]c", () => {
+    assert.deepEqual(CARRIED_MAKEUP_DENOMINATIONS_CENTS, [50, 30, 20, 10, 5]);
+  });
+
+  it("calculates # of $1.85 stamps and remaining cost for all Parcel Post tiers matching Postage_Quick_sheet.html", () => {
     for (const rate of AUSPOST_COUNTER_RATE_TIERS.parcelPost) {
       const plan = optimizePosStamps(rate.totalCents);
       assert.equal(plan.verifiedExactMatch, true, `Failed exact match for ${rate.tier}`);
@@ -25,20 +29,12 @@ describe("Australia Post Store-Inventory-Aware POS Stamp Engine", () => {
       assert.equal(
         plan.remainderCents,
         rate.expectedRemainderCents,
-        `Mismatch remainder cents for Parcel Post ${rate.tier}`
+        `Mismatch remaining cost for Parcel Post ${rate.tier}`
       );
-
-      // Verify no $10.00 or $5.00 stamps are ever recommended
-      for (const alloc of plan.allAllocations) {
-        assert.ok(
-          alloc.denominationCents <= BASE_THEMATIC_STAMP_CENTS,
-          `Unexpected high denomination ${alloc.label} recommended`
-        );
-      }
     }
   });
 
-  it("resolves all Express Post tiers with 100% accuracy matching Postage_Quick_sheet.html", () => {
+  it("calculates # of $1.85 stamps and remaining cost for all Express Post tiers matching Postage_Quick_sheet.html", () => {
     for (const rate of AUSPOST_COUNTER_RATE_TIERS.expressPost) {
       const plan = optimizePosStamps(rate.totalCents);
       assert.equal(plan.verifiedExactMatch, true, `Failed exact match for ${rate.tier}`);
@@ -50,35 +46,31 @@ describe("Australia Post Store-Inventory-Aware POS Stamp Engine", () => {
       assert.equal(
         plan.remainderCents,
         rate.expectedRemainderCents,
-        `Mismatch remainder cents for Express Post ${rate.tier}`
+        `Mismatch remaining cost for Express Post ${rate.tier}`
       );
     }
   });
 
-  it("resolves all Domestic Letter tiers using exact multiples of $1.85 stamps", () => {
+  it("calculates all Domestic Letter tiers using exact multiples of $1.85 stamps with $0.00 remaining", () => {
     for (const rate of AUSPOST_COUNTER_RATE_TIERS.letters) {
       const plan = optimizePosStamps(rate.totalCents);
       assert.equal(plan.verifiedExactMatch, true);
       assert.equal(plan.primary185Count, rate.expected185Count);
       assert.equal(plan.remainderCents, 0);
-      assert.equal(plan.remainderAllocations.length, 0);
     }
   });
 
-  it("demonstrates why Legacy POS 'S' key fails LPO drawer stock on $10.20 Parcel Post", () => {
+  it("shows Post+ 'S' key defaulting to $10.00 stamps vs. the A4 Quick Sheet $1.85 count + remaining cost", () => {
     const legacyPlan = simulateLegacyPosGreedy(1020);
-    // Legacy greedy recommends 1x $10.00 + 1x 20c
+    // Post+ greedy recommends 1x $10.00 + 1x 20c because it doesn't track drawer stock
     assert.equal(legacyPlan[0].denominationCents, 1000);
     assert.equal(legacyPlan[0].count, 1);
 
-    // Store-Inventory-Aware POS Engine recommends 5x $1.85 ($9.25) + $0.95 (50c + 25c + 20c)
-    const lpoPlan = optimizePosStamps(1020);
-    assert.equal(lpoPlan.primary185Count, 5);
-    assert.equal(lpoPlan.remainderCents, 95);
-    assert.deepEqual(
-      lpoPlan.remainderAllocations.map((a) => `${a.count}x${a.label}`),
-      ["1x50c", "1x25c", "1x20c"]
-    );
+    // Quick Sheet calculator gives 5x $1.85 stamps and $0.95 remaining cost
+    const quickSheetPlan = optimizePosStamps(1020);
+    assert.equal(quickSheetPlan.primary185Count, 5);
+    assert.equal(quickSheetPlan.remainderCents, 95);
+    assert.equal(quickSheetPlan.remainderFormatted, "$0.95");
   });
 });
 
